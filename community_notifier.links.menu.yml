@@ -1,0 +1,14 @@
+
+# Community notifier frequency menu items definition
+entity.community_notifier_frequency.collection:
+  title: 'Community notifier frequency list'
+  route_name: entity.community_notifier_frequency.collection
+  description: 'List Community notifier frequency entities'
+  parent: system.admin_structure
+  weight: 100
+
+community_notifier_frequency.admin.structure.settings:
+  title: Community notifier frequency settings
+  description: 'Configure Community notifier frequency entities'
+  route_name: community_notifier_frequency.settings
+  parent: system.admin_structure

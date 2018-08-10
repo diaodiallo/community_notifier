@@ -1,0 +1,7 @@
+name: community_notifier
+type: module
+description: 'Provides notifications on nodes and forum'
+core: 8.x
+package: notifier
+dependencies:
+  - flag

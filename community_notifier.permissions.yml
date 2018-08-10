@@ -1,0 +1,22 @@
+add community notifier frequency entities:
+  title: 'Create new Community notifier frequency entities'
+
+administer community notifier frequency entities:
+  title: 'Administer Community notifier frequency entities'
+  description: 'Allow to access the administration form to configure Community notifier frequency entities.'
+  restrict access: true
+
+delete community notifier frequency entities:
+  title: 'Delete Community notifier frequency entities'
+
+edit community notifier frequency entities:
+  title: 'Edit Community notifier frequency entities'
+
+access community notifier frequency overview:
+  title: 'Access the Community notifier frequency overview page'
+
+view published community notifier frequency entities:
+  title: 'View published Community notifier frequency entities'
+
+view unpublished community notifier frequency entities:
+  title: 'View unpublished Community notifier frequency entities'

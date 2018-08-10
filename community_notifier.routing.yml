@@ -1,0 +1,21 @@
+community_notifier.flag:
+  path: '/community_notifier/flag'
+  defaults:
+    _controller: '\Drupal\community_notifier\Controller\CommunityNotifierController::flag'
+    _title: 'flag'
+  requirements:
+    _permission: 'access content'
+community_notifier.unflag:
+  path: '/community_notifier/unflag'
+  defaults:
+    _controller: '\Drupal\community_notifier\Controller\CommunityNotifierController::unflag'
+    _title: 'unflag'
+  requirements:
+    _permission: 'access content'
+community_notifier.config:
+  path: /admin/config/community/community_notifier
+  defaults:
+      _form: '\Drupal\community_notifier\Form\CommunityNotifierSettingsForm'
+      _title: 'Community Notifier Settings'
+  requirements:
+    _permission: 'administer site configuration'

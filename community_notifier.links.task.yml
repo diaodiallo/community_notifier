@@ -1,0 +1,22 @@
+# Community notifier frequency routing definition
+community_notifier_frequency.settings_tab:
+  route_name: community_notifier_frequency.settings
+  title: 'Settings'
+  base_route: community_notifier_frequency.settings
+
+entity.community_notifier_frequency.canonical:
+  route_name: entity.community_notifier_frequency.canonical
+  base_route: entity.community_notifier_frequency.canonical
+  title: 'View'
+
+entity.community_notifier_frequency.edit_form:
+  route_name: entity.community_notifier_frequency.edit_form
+  base_route: entity.community_notifier_frequency.canonical
+  title: 'Edit'
+
+entity.community_notifier_frequency.delete_form:
+  route_name:  entity.community_notifier_frequency.delete_form
+  base_route:  entity.community_notifier_frequency.canonical
+  title: Delete
+  weight: 10
+

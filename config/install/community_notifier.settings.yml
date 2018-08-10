@@ -1,0 +1,9 @@
+community_notifier_settings:
+  settings:
+    messages:
+      send: 5
+      length: 100
+      separator: '*'
+    frequency:
+      daily: 0
+      weekly: 6

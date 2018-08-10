@@ -1,0 +1,5 @@
+entity.community_notifier_frequency.add_form:
+  route_name: entity.community_notifier_frequency.add_form
+  title: 'Add Community notifier frequency'
+  appears_on:
+    - entity.community_notifier_frequency.collection

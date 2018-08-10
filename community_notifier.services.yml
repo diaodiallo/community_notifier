@@ -1,0 +1,10 @@
+services:
+  community_notifier.nodeflags:
+    class: Drupal\community_notifier\CommunityNotifierService
+    arguments: ['@flag', '@current_user', '@entity_type.manager', '@config.factory', '@database','@module_handler']
+
+  community_notifier.route_subscriber:
+    class: Drupal\community_notifier\Routing\CommunityNotifierRouteSubscriber
+    tags:
+      - { name: event_subscriber }
+

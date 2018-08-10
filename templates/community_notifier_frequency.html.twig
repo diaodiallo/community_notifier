@@ -1,0 +1,22 @@
+{#
+/**
+ * @file community_notifier_frequency.html.twig
+ * Default theme implementation to present Community notifier frequency data.
+ *
+ * This template is used when viewing Community notifier frequency pages.
+ *
+ *
+ * Available variables:
+ * - content: A list of content items. Use 'content' to print all content, or
+ * - attributes: HTML attributes for the container element.
+ *
+ * @see template_preprocess_community_notifier_frequency()
+ *
+ * @ingroup themeable
+ */
+#}
+<div{{ attributes.addClass('community_notifier_frequency') }}>
+  {% if content %}
+    {{- content -}}
+  {% endif %}
+</div>

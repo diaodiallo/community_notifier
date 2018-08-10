@@ -1,0 +1,93 @@
+<?php
+/**
+ * Implements hook_install.
+ */
+function community_notifier_install() {
+  $flag_ids = ['subscribe', 'subscribe_taxonomy'];
+  $moduleHandler = \Drupal::service('module_handler');
+
+  $subscribe_taxonomy = [
+    'id' => 'subscribe_taxonomy',
+    'label' => 'subscribe taxonomy',
+    'langcode' => 'en',
+    'status' => TRUE,
+    'bundles' => ['forums'],
+    'entity_type' => 'taxonomy_term',
+    'global' => FALSE,
+    'flag_short' => 'subscribe to this forum',
+    'unflag_short' => 'unsubscribe  to this forum',
+    'flag_type' => 'entity:taxonomy_term',
+    'link_type' => 'reload',
+  ];
+  $subscribe = [
+    'id' => 'subscribe',
+    'label' => 'subscribe',
+    'langcode' => 'en',
+    'status' => TRUE,
+    'bundles' => ['node'],
+    'entity_type' => 'node',
+    'global' => FALSE,
+    'flag_short' => 'subscribe to this item',
+    'unflag_short' => 'unsubscribe  to this item',
+    'flag_type' => 'entity:node',
+    'link_type' => 'reload',
+  ];
+  $parameters['subscribe'] = $subscribe;
+  $parameters['subscribe_taxonomy'] = $subscribe_taxonomy;
+
+  $storage = \Drupal::entityTypeManager()->getStorage('flag');
+  $ids = $storage->getQuery()->condition('id', $flag_ids, 'IN')->execute();
+  $flags = $storage->loadMultiple($ids);
+  $numberFlags = count($flags);
+
+  if ($numberFlags < 2){
+    $notifierService = \Drupal::service('community_notifier.nodeflags');
+
+    if ($numberFlags == 0){
+      foreach ($parameters as $parameter){
+        if ($parameter == 'subscribe_taxonomy'){
+          if ($moduleHandler->moduleExists('forum')){
+            $notifierService->createFlag($parameter);
+          }
+        }
+        else{
+          $notifierService->createFlag($parameter);
+        }
+      }
+    }
+    else{
+      foreach($flags as $flag){
+        $id = $flag->id();
+        if (in_array($id, $flag_ids)){
+          unset($flag_ids[array_search($id, $flag_ids)]);
+        }
+      }
+      foreach ($flag_ids as $flag_id){
+        if ($flag_id == 'subscribe_taxonomy'){
+          if ($moduleHandler->moduleExists('forum')){
+            $notifierService->createFlag($parameters[$flag_id]);
+          }
+        }
+        else{
+          $notifierService->createFlag($parameters[$flag_id]);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_uninstall.
+ */
+function community_notifier_uninstall() {
+  /*$communityNotifierFrequencies = \Drupal\community_notifier\Entity\CommunityNotifierFrequency::loadMultiple();
+
+  if($communityNotifierFrequencies){
+    try{
+      \Drupal::entityTypeManager()->getStorage('community_notifier_frequency')->delete($communityNotifierFrequencies);
+    }catch (\Drupal\Core\Entity\Exception\NoCorrespondingEntityClassException $e) {
+      print($e->getMessage());
+    }
+
+  }*/
+}

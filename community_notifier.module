@@ -1,0 +1,535 @@
+<?php
+
+/**
+ * @file
+ * Contains community_notifier.module.
+ */
+
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\comment\CommentInterface;
+use \Drupal\Core\Form\FormStateInterface;
+use \Drupal\community_notifier\Util\CommunityNotifierUtility;
+
+define("DAILY", 86400);
+define("WEEKLY", 604800);
+
+/**
+ * Implements hook_help().
+ */
+function community_notifier_help($route_name, RouteMatchInterface $route_match) {
+  switch ($route_name) {
+    // Main module help for the community_notifier module.
+    case 'help.page.community_notifier':
+      $output = '';
+      $output .= '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('My Awesome Module') . '</p>';
+      return $output;
+
+    default:
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function community_notifier_theme() {
+  return [
+    'community_notifier' => [
+      'render element' => 'children',
+    ],
+  ];
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert().
+ *This is a Git test
+ */
+function community_notifier_comment_insert(CommentInterface $comment) {
+  $commentedEntityId = $comment->getCommentedEntityId();
+
+  $languageComment = $comment->language()->getId();
+
+  $notificationEntities = \Drupal::service('community_notifier.nodeflags')->getFlaggedNotificationEntities($commentedEntityId);
+
+  $moduleHandler = \Drupal::service('module_handler');
+  if ($moduleHandler->moduleExists('forum')){
+
+      $forumService = \Drupal::service('forum_manager');
+      $isForumType = $forumService->checkNodeType($comment->getCommentedEntity());
+      if ($isForumType){
+          $forum_index_storage = \Drupal::service('forum.index_storage');
+          $term_id = $forum_index_storage->getOriginalTermId($comment->getCommentedEntity());
+
+          // Get the appropriate Forum name
+          $forumName = NULL;
+             $results = \Drupal::database()->query("SELECT name FROM taxonomy_term_field_data WHERE tid = :tid AND langcode = :langcode", [':tid' => $term_id, ':langcode' => $languageComment])->fetchAll();
+                 if (count($results) == 0){
+                    \Drupal::logger('community_notifier')->notice('No data from this query : Forum type id = '.$term_id);
+                   $term = \Drupal\taxonomy\Entity\Term::load($term_id);
+                   $forumName = $term->getName();
+                 }else{
+                    foreach ($results as $result) {
+                       $translatedName = get_object_vars($result);
+                          foreach ($translatedName as $translatedForumName){
+                              $forumName = $translatedForumName;
+                          }
+                    }
+                 }
+      }
+  }
+
+  $base_url = \Symfony\Component\HttpFoundation\Request::createFromGlobals()->getSchemeAndHttpHost();
+  $link = $base_url.'/node/'.$commentedEntityId.'#comment-'.$comment->id();
+
+  foreach ($notificationEntities as $notificationEntity) {
+    $frequency = $notificationEntity->getFrequency();
+
+      $userId = $notificationEntity->getOwnerId();
+      $user = \Drupal\user\Entity\User::load($userId);
+      $userLanguage = $user->getPreferredLangcode();
+
+    /**
+     * Get the appropriate translated title
+     */
+
+    $title = NULL;
+    $results = \Drupal::database()->query("SELECT title FROM node_field_data WHERE type = :type AND nid = :nid AND langcode = :langcode", [':type' => 'forum', ':nid' => $commentedEntityId, ':langcode' => $languageComment])->fetchAll();
+    if (count($results) == 0){
+      \Drupal::logger('community_notifier')->notice('No data from this query : Furum title id = '.$commentedEntityId);
+      $title = $comment->getCommentedEntity()->get('title')->value;
+    }else{
+      foreach ($results as $result) {
+        $translatedTitle = get_object_vars($result);
+        foreach ($translatedTitle as $translatedTitleContent){
+          $title = $translatedTitleContent;
+        }
+      }
+    }
+      
+      if ($userLanguage == 'en') {
+        $messageBody = '<p>'.$comment->getOwner()->getAccountName().' commented on '.
+          $comment->getCommentedEntity()->getOwner()->getUsername().' post in '.$forumName.': '
+          .$title.'</p><p>'.$comment->get('comment_body')->value.'</p> <p>'.$link.'</p>'.
+          '<p>~~~To post a comment on this post via email, reply to this email.~~~</p>';
+      } elseif ($userLanguage == 'fr') {
+        $messageBody = '<p>'.$comment->getOwner()->getAccountName().' a commenté la publication de '.
+          $comment->getCommentedEntity()->getOwner()->getUsername().' dans '.$forumName.': '
+          .$title.'</p><p>'.$comment->get('comment_body')->value.'</p> <p>'.$link.'</p>'.
+          '<p>~~~Pour commenter cette publication par email, repondez juste a cet email.~~~</p>';
+      }
+
+
+      $subject = 'RRHO: '. $title;
+
+
+
+    if($languageComment == $userLanguage){
+       if ($frequency == 'immediately'){
+          community_notifier_emailer('community_notifier', 'comment_insert_alert', $notificationEntity->getOwner()->getEmail(),
+          $subject, $messageBody, $notificationEntity->getOwner()->getUsername(), $comment->getCommentedEntity()->id(), $languageComment, $userLanguage);
+       }
+    }
+  }
+
+  // Getting the second language
+  $translatedLang = 'not';
+  if ($languageComment == 'fr'){
+    $translatedLang = 'en';
+  }elseif ($languageComment == 'en'){
+    $translatedLang = 'fr';
+  }
+  translated_email_queue($comment->id(), $translatedLang, $comment);
+}
+
+/** Implement translation queue
+ * @param $id comment id
+ * @param $lang translated langage
+ * @param $comment the comment
+ */
+function translated_email_queue($id, $lang, $comment){
+
+  /**  QueueFactory implementation */
+  $data['cid'] = $id;
+  $data['lang'] = $lang;
+  $data['comment'] = $comment;
+
+  $queue_factory = \Drupal::service('queue');
+  $queue = $queue_factory->get('translated_queue');
+  $queue->createQueue();
+  $queue->createItem($data);
+}
+
+/** Implement the post translation queue
+ */
+function translated_post_queue($email, $lang, $link, $entityUser, $flaggedEntity, $entityId){
+
+  /**  QueueFactory implementation */
+  $data['email'] = $email;
+  $data['lang'] = $lang;
+  $data['link'] = $link;
+  $data['entityUser'] = $entityUser;
+  $data['flaggedEntity'] = $flaggedEntity;
+  $data['entityId'] = $entityId;
+
+  $queue_factory = \Drupal::service('queue');
+  $queue = $queue_factory->get('post_queue');
+  $queue->createQueue();
+  $queue->createItem($data);
+}
+/**
+ * Implements hook_mail().
+ */
+function community_notifier_mail($key, &$message, $params) {
+  $options = array(
+    'langcode' => $message['langcode'],
+  );
+
+  switch ($key) {
+    case 'comment_insert_alert':
+      $fromEmail = reformatEmail(\Drupal::config('system.site')->get('mail'), $params['comment_id']);
+      $message['from'] = $fromEmail;
+      $message['reply-to'] = $fromEmail;
+      $message['subject'] = t('@title', array('@title' => $params['subject']), $options);
+      $message['body'][] = $params['message'];
+      break;
+    case 'query_mail':
+      $fromEmail = reformatEmail(\Drupal::config('system.site')->get('mail'), $params['entity_id']);
+      $message['from'] = $fromEmail;
+      $message['reply-to'] = $fromEmail;
+      $message['subject'] = t('@title', array('@title' => $params['subject']));
+      $message['body'][] = $params['message'];
+      break;
+  }
+}
+
+/**
+ * Implements hook_mail_alter().
+ */
+
+/**
+ * @param $module see hook_mail documentation.
+ * @param $key see hook_mail documentation.
+ * @param $to see hook_mail documentation.
+ * @param $subject see hook_mail documentation.
+ * @param $message see hook_mail documentation.
+ * @param $username drupal username of entity receiving the email.
+ */
+function community_notifier_emailer($module, $key, $to, $subject, $message, $username, $commentId, $commentLang, $userLang) {
+  $mailManager = \Drupal::service('plugin.manager.mail');
+  $fromEmail = reformatEmail(\Drupal::config('system.site')->get('mail'), $commentId);
+  $params['message'] = $message;
+  $params['subject'] = $subject;
+  $params['comment_id'] = $commentId;
+  $params['from'] = $fromEmail;
+  $langcode = \Drupal::currentUser()->getPreferredLangcode();//should be changed to system lang
+
+  $result = $mailManager->mail($module, $key, $to, $langcode, $params, NULL, true);
+  if ($result['result'] !== true) {
+    \Drupal::logger('smtp')->error(t('There was a problem sending an email to user '.$username.' Comment language '.$commentLang.' User language '.$userLang));
+  }
+}
+/**
+ * Implements hook_form_alter().
+ */
+function community_notifier_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  switch($form_id){
+    case 'user_form':
+      $form_object = $form_state->getFormObject();
+      $entity = $form_object->getEntity();
+      $notEntities = \Drupal::service('community_notifier.nodeflags')->getUserNotificationEntities($entity->id());
+
+      $dropdown_array = [
+        'immediately' => 'immediately',
+        'daily' => 'daily',
+        'weekly' => 'weekly'
+      ];
+      $form['subscriptions'] = array(
+        '#type' => 'fieldset',
+        '#title' => 'Subscriptions',
+      );
+      $header = [
+        'id' => t('#'),
+        'topic' => t('Topic'),
+        'flag' => t('Flag'),
+        'frequency' => t('Frequency'),
+      ];
+      $form['subscriptions']['table'] = [
+        '#type' => 'table',
+        '#header' => $header,
+        '#tabledrag' => FALSE,
+        '#empty' => t('No subscriptions available.'),
+      ];
+      $field_count = 1;
+
+      foreach ($notEntities as $ent){
+        $form['subscriptions']['table'][$field_count]['id'] = [
+          '#type' => 'hidden',
+          '#value' => $ent->id(),
+          //'#column' => 'one',
+        ];
+
+        $form['subscriptions']['table'][$field_count]['topic'] = [
+          '#type' => 'label',
+          '#title' => $ent->getFlaggedEntityName(),
+          //'#column' => 'one',
+        ];
+        $form['subscriptions']['table'][$field_count]['flag'] = [
+          '#type' => 'label',
+          '#title' => $ent->getFlagId(),
+          //'#column' => 'one',
+        ];
+        $form['subscriptions']['table'][$field_count]['frequency'] = [
+          '#type' => 'select',
+          '#default_value' => $ent->getFrequency(),
+          '#options' => $dropdown_array,
+        ];
+        $field_count++;
+      }
+      $form['actions']['submit']['#submit'][] = 'community_notifier_user_from_submit';
+      return $form;
+      break;
+    case 'community_notifier_frequency_edit_form':
+      $form['name']['#disabled'] = TRUE;
+      $form['flag_id']['#disabled'] = TRUE;
+      $form['entity_id']['#disabled'] = TRUE;
+      $form['entity_name']['#disabled'] = TRUE;
+      $dropdown_array = [
+        'immediately' => 'immediately',
+        'daily' => 'daily',
+        'weekly' => 'weekly'
+      ];
+      $form['frequency']['widget'][0]['value'] = array(
+        '#type' => 'select',
+        '#default_value' => '1',
+        '#options' => $dropdown_array,
+      );
+
+      break;
+  }
+}
+
+/**
+ * Implements hook_form_submit().
+ */
+function community_notifier_user_from_submit(array  $form, FormStateInterface $form_state){
+
+  $subscriptions = $form_state->getValue('table');
+  foreach ($subscriptions as $subscription){
+    $newSubscription = $subscription['frequency'];
+    $notificationEntity = \Drupal::service('community_notifier.nodeflags')->updateNotificationEntity($subscription['id'], $newSubscription);
+    $oldSubscription = $notificationEntity->getFrequency();
+
+    //checks if old subscription is different from selected subscription and if different update notifications.
+    if ($oldSubscription != $newSubscription){
+      $notificationEntity->setFrequency($newSubscription);
+      $notificationEntity->save();
+    }
+  }
+}
+
+/**
+ * Adds email to queue
+ *
+ * @param string $to
+ *   Receipient email.
+ * @param string $subject
+ *   Email subject.
+ * @param string $message
+ *   Email body message.
+ */
+function communityNotifierEmailQueue($to, $subject, $message, $id) {
+  $data['to'] = $to;
+  $data['subject'] = $subject;
+  $data['message'] = $message;
+  $data['entity_id'] = $id;
+
+  $queue_factory = \Drupal::service('queue');
+  $queue = $queue_factory->get('email_queue');
+  $queue->createQueue();
+  $queue->createItem($data);
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ */
+function community_notifier_cron(){
+  $daily_interval = DAILY;
+  $weekly_interval = WEEKLY;
+
+  $next_daily_execution  = \Drupal::state()->get('community_notifier.daily_next_execution');
+  $next_daily_execution = !empty($next_daily_execution) ? $next_daily_execution : 0;
+
+  //executes daily
+  if (\Drupal::time()->getRequestTime() >= $next_daily_execution){
+    $comments = \Drupal::service('community_notifier.nodeflags')->getComments('daily');
+
+   // $inmailCommentId = "[comment][#{$entity->id()}]";
+   // $subject = 'RRHO: New topic in '. $entity->label() . ' ID: ' . $inmailCommentId;
+
+    foreach ($comments as $comment){
+      communityNotifierEmailQueue($comment['email'], $comment['subject'], $comment['comments']['body'], $comment['comments']['id']);
+    }
+    \Drupal::state()->set('community_notifier.daily_next_execution', \Drupal::time()->getRequestTime() + $daily_interval);
+  }
+
+  $next_weekly_execution  = \Drupal::state()->get('community_notifier.weekly_next_execution');
+  $next_weekly_execution = !empty($next_weekly_execution) ? $next_weekly_execution : 0;
+  //executes weekly
+  if (\Drupal::time()->getRequestTime() >= $next_weekly_execution){
+    $comments = \Drupal::service('community_notifier.nodeflags')->getComments('weekly');
+    foreach ($comments as $comment){
+      $body = \Drupal\community_notifier\Util\CommunityNotifierUtility::mergeBodies($comment['comments']);
+      communityNotifierEmailQueue($comment['email'], $comment['subject'], $body, $comment['comments']['id']);
+    }
+    \Drupal::state()->set('community_notifier.weekly_next_execution', \Drupal::time()->getRequestTime() + $weekly_interval);
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert().
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ */
+function community_notifier_node_insert(Drupal\Core\Entity\EntityInterface $entity){
+  $moduleHandler = \Drupal::service('module_handler');
+  if ($moduleHandler->moduleExists('forum')){
+    $forumService = \Drupal::service('forum_manager');
+    $isForumType = $forumService->checkNodeType($entity);
+
+    if ($isForumType){
+      $forum_index_storage = \Drupal::service('forum.index_storage');
+      $term_id = $forum_index_storage->getOriginalTermId($entity);
+      $flagEntity = \Drupal::service('community_notifier.nodeflags')->getFlagEntityById('subscribe');
+
+      $currentUserId = \Drupal::currentUser()->id();
+      $notificationEntities = \Drupal::service('community_notifier.nodeflags')->getNotificationEntitiesByForum($term_id);
+
+      $nodeBodies = [];
+      $nodeBody['body'] = $entity->get('body')->value;
+      array_push($nodeBodies, $nodeBody);
+      $body = CommunityNotifierUtility::mergeBodies($nodeBodies);
+
+        $base_url = \Symfony\Component\HttpFoundation\Request::createFromGlobals()->getSchemeAndHttpHost();
+        $link = $base_url.'/node/'.$entity->id();
+        $entityLang = $entity->language()->getId();
+
+      // Getting the second language
+      $translatedLang = 'not';
+      if ($entityLang == 'fr'){
+        $translatedLang = 'en';
+      }elseif ($entityLang == 'en'){
+        $translatedLang = 'fr';
+      }
+
+
+      foreach ($notificationEntities as $notificationEntity){
+          $messageBody = '';
+        $subscribedUser = $notificationEntity->getOwner();
+        //checks if current topic creater is subscribed to forum
+        if ($currentUserId == $subscribedUser->id()){
+          \Drupal::service('flag')->flag($flagEntity, $entity, \Drupal::currentUser());
+          \Drupal::service('community_notifier.nodeflags')->flag($flagEntity->id(), $entity->id());
+        }
+
+        // TEST IF THE USER HAS THE APPROPRIATE LANG
+            $userLang = $subscribedUser->getPreferredLangcode();
+
+
+            \Drupal::logger('community_notifier')->notice('The entity language : '.$entityLang.' The user language '.$userLang);
+
+        //GET the appropriate Title and Body
+
+            $title = NULL;
+            $results = \Drupal::database()->query("SELECT title FROM node_field_data WHERE type = :type AND nid = :nid AND langcode = :langcode", [':type' => 'forum', ':nid' => $entity->id(), ':langcode' => $entityLang])->fetchAll();
+            if (count($results) == 0){
+               \Drupal::logger('community_notifier')->notice('No data from this query : Post title id = '.$entity->id());
+               $title = $entity->getTitle();
+            }else{
+               foreach ($results as $result) {
+                  $translatedTitle = get_object_vars($result);
+                  foreach ($translatedTitle as $translatedTitleContent){
+                     $title = $translatedTitleContent;
+                  }
+               }
+            }
+
+            //GET the translated body of the post
+        $entityBody = NULL;
+        $results = \Drupal::database()->query("SELECT body_value FROM node__body WHERE entity_id = :entity_id AND langcode = :langcode", [':entity_id' => $entity->id(), ':langcode' => $entityLang])->fetchAll();
+        if (count($results) == 0){
+          \Drupal::logger('community_notifier')->notice('No data from this query : Post body id = '.$entity->id());
+          $entityBody = $entity->get('body')->value;
+        }else{
+          foreach ($results as $result) {
+            $translatedEntity = get_object_vars($result);
+            foreach ($translatedEntity as $translatedEntityContent){
+              $entityBody = $translatedEntityContent;
+            }
+          }
+        }
+
+        if ($entityLang == 'en'){
+        $messageBody = '<p>' . $entity->getOwner()->getUsername().' added a new post in '.
+            $notificationEntity->getFlaggedEntityName().': '.$title.' </p><p> '.$entityBody.
+            '</p><p>'.$link.'</p>';
+        $body = t($messageBody.'<p>~~~To post a comment on this post via email, reply to this email.~~~</p>') /*. $body*/;
+        }elseif ($entityLang == 'fr'){
+          $messageBody = '<p>' . $entity->getOwner()->getUsername().' a ajouteé une nouvelle publication dans '.
+            $notificationEntity->getFlaggedEntityName().': '.$title.' </p><p> '.$entityBody.
+            '</p><p>'.$link.'</p>';
+          $body = t($messageBody.'<p>~~~Pour commenter cette publication par email, repondez a cet email.~~~</p>') /*. $body*/;
+        }
+
+        $email = $subscribedUser->getEmail();
+        $subject = 'RRHO: '. $title;
+        $entityUser = $entity->getOwner()->getUsername();
+        $flaggedEntity = $notificationEntity->getFlaggedEntityName();
+
+            if ($userLang == $entityLang){
+              communityNotifierEmailQueue($email, $subject, $body, $entity->id());
+            }
+            elseif ($userLang !== $entityLang){
+              translated_post_queue($email, $translatedLang, $link, $entityUser, $flaggedEntity, $entity->id());
+            }
+      }
+
+    }
+  }
+}
+/**
+ * Implements hook_module_implements_alter().
+ */
+function community_notifier_module_implements_alter(&$implementations, $hook) {
+
+  if($hook == 'node_insert'){
+    $group = $implementations['community_notifier'];
+    unset($implementations['community_notifier']);
+    $implementations['community_notifier'] = $group;
+  }
+}
+
+/**
+ * Implements hook_entity_predelete().
+ */
+function community_notifier_entity_predelete(Drupal\Core\Entity\EntityInterface $entity){
+  $bundle = $entity->bundle();
+
+  if ($bundle == 'forum' || $bundle == 'forums' || $bundle == 'article'){
+    $communityService = \Drupal::service('community_notifier.nodeflags');
+    if ($bundle == 'forums'){
+      $entities = \Drupal::service('community_notifier.nodeflags')->getForumTopics($entity->id());
+      $communityService->deleteSubscriptions($entity->id());
+      foreach ($entities as $ent){
+        $communityService->deleteSubscriptions($ent->id());
+      }
+    }
+
+    $communityService->deleteSubscriptions($entity->id());
+  }
+}
+function reformatEmail($emailToReformat, $id){
+    $emailParts = explode('@', $emailToReformat);
+    return  $emailParts[0].'+'.$id.'@'.$emailParts[1];
+}
